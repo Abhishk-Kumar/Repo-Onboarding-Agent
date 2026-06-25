@@ -34,7 +34,7 @@ app.include_router(onboard_router)
 
 @app.on_event("startup")
 async def startup():
-    logger.info("Starting Codebase Onboarding Agent...")
+    logger.info("Starting Codebase Onboarding Agent v3...")
     logger.info("Embedding model: %s", settings.embedding_model)
     logger.info("Vector store path: %s", settings.vector_store_path)
 

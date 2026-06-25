@@ -18,7 +18,7 @@ const COLORS = {
 
 export default function AgentTracePanel({ traces }) {
   const bottomRef = useRef(null)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -27,24 +27,27 @@ export default function AgentTracePanel({ traces }) {
   if (traces.length === 0) return null
 
   return (
-    <div style={{ marginBottom: 24 }}>
+    <div style={{
+      borderBottom: '1px solid var(--color-border)',
+      background: 'var(--color-surface)',
+    }}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 8,
+        padding: '6px 12px',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <div style={{
-            width: 8, height: 8, borderRadius: '50%',
+            width: 6, height: 6, borderRadius: '50%',
             background: 'var(--color-green)',
-            boxShadow: '0 0 8px var(--color-green)',
+            boxShadow: '0 0 6px var(--color-green)',
           }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-muted)' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)' }}>
             Agent Activity
           </span>
           <span style={{
-            fontSize: 11, color: 'var(--color-text-muted)',
+            fontSize: 10, color: 'var(--color-text-muted)',
             background: 'var(--color-surface-2)',
-            padding: '1px 7px', borderRadius: 10,
+            padding: '1px 6px', borderRadius: 8,
           }}>
             {traces.length}
           </span>
@@ -53,34 +56,31 @@ export default function AgentTracePanel({ traces }) {
           onClick={() => setCollapsed(c => !c)}
           style={{
             background: 'none', border: 'none', color: 'var(--color-text-muted)',
-            cursor: 'pointer', fontSize: 13, padding: '2px 8px',
+            cursor: 'pointer', fontSize: 11, padding: '2px 6px',
             borderRadius: 4,
           }}
         >
-          {collapsed ? 'Expand' : 'Collapse'}
+          {collapsed ? 'Show' : 'Hide'}
         </button>
       </div>
 
       {!collapsed && (
         <div style={{
-          background: 'var(--color-bg)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 10,
-          padding: '12px 0',
-          maxHeight: 320,
+          padding: '4px 0',
+          maxHeight: 180,
           overflowY: 'auto',
           fontFamily: 'var(--font-mono)',
-          fontSize: 13,
-          lineHeight: 1.6,
+          fontSize: 12,
+          lineHeight: 1.5,
         }}>
           {traces.map((t, i) => (
             <div
               key={i}
               className="trace-line"
               style={{
-                padding: '2px 16px',
+                padding: '1px 12px',
                 display: 'flex',
-                gap: 8,
+                gap: 6,
                 color: COLORS[t.type] || 'var(--color-text)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
@@ -90,14 +90,6 @@ export default function AgentTracePanel({ traces }) {
               <span>{t.message}</span>
             </div>
           ))}
-
-          {/* Show a pulsing cursor while still running */}
-          {traces.length > 0 && traces[traces.length - 1].type !== 'error' && (
-            <div style={{ padding: '2px 16px', display: 'flex', gap: 8 }}>
-              <span style={{ color: 'var(--color-accent)' }} className="cursor-blink" />
-            </div>
-          )}
-
           <div ref={bottomRef} />
         </div>
       )}
