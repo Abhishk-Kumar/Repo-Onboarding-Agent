@@ -1,24 +1,49 @@
 import threading
+import logging
+import hashlib
 
-from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
+logger = logging.getLogger(__name__)
 
 _embeddings_instance = None
 _embeddings_lock = threading.Lock()
 
 
-class _ONNXEmbeddings:
-    """LangChain-compatible embedding wrapper using ChromaDB's ONNX model.
-    No torch dependency — uses ONNX runtime (~50MB vs ~300MB).
-    """
+class _HuggingFaceAPIEmbeddings:
+    """Uses HuggingFace's free Inference API (no local model, no API key needed)."""
 
-    def __init__(self):
-        self._model = ONNXMiniLM_L6_V2()
+    API_URL = (
+        "https://api-inference.huggingface.co/pipeline/feature-extraction/"
+        "sentence-transformers/all-MiniLM-L6-v2"
+    )
 
     def embed_documents(self, texts):
-        return self._model(texts)
+        import requests
+        resp = requests.post(
+            self.API_URL,
+            json={"inputs": texts, "options": {"wait_for_model": True}},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     def embed_query(self, text):
-        return self._model([text])[0]
+        return self.embed_documents([text])[0]
+
+
+class _SimpleEmbeddings:
+    """Zero-dependency fallback when API is unavailable. Quality is basic."""
+
+    DIM = 128
+
+    def embed_documents(self, texts):
+        result = []
+        for text in texts:
+            h = hashlib.sha256(text.encode()).digest()
+            result.append([b / 255.0 for b in h[:self.DIM]])
+        return result
+
+    def embed_query(self, text):
+        return self.embed_documents([text])[0]
 
 
 def get_embeddings():
@@ -26,7 +51,15 @@ def get_embeddings():
     if _embeddings_instance is None:
         with _embeddings_lock:
             if _embeddings_instance is None:
-                _embeddings_instance = _ONNXEmbeddings()
+                try:
+                    logger.info("Initializing HuggingFace API embeddings...")
+                    _embeddings_instance = _HuggingFaceAPIEmbeddings()
+                    logger.info("Using HuggingFace Inference API for embeddings")
+                except Exception as e:
+                    logger.warning(
+                        "HuggingFace API unavailable (%s). Using simple fallback.", e
+                    )
+                    _embeddings_instance = _SimpleEmbeddings()
     return _embeddings_instance
 
 
