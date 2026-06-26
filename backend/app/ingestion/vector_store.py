@@ -2,11 +2,6 @@ import os
 import hashlib
 import logging
 
-from langchain_chroma import Chroma
-from langchain_core.documents import Document
-from app.config import settings
-from app.embeddings import get_embeddings
-
 logger = logging.getLogger(__name__)
 
 
@@ -15,11 +10,16 @@ def _repo_cache_key(repo_url: str) -> str:
 
 
 def _cache_path(repo_url: str) -> str:
+    from app.config import settings
     key = _repo_cache_key(repo_url)
     return os.path.join(settings.vector_store_path, key)
 
 
-def build_vector_store(documents: list[Document], repo_url: str) -> Chroma:
+def build_vector_store(documents, repo_url: str):
+    from langchain_chroma import Chroma
+    from langchain_core.documents import Document
+    from app.embeddings import get_embeddings
+
     embeddings = get_embeddings()
 
     cache_dir = _cache_path(repo_url)
@@ -42,7 +42,10 @@ def build_vector_store(documents: list[Document], repo_url: str) -> Chroma:
     return vectorstore
 
 
-def get_vector_store(repo_url: str) -> Chroma | None:
+def get_vector_store(repo_url: str):
+    from langchain_chroma import Chroma
+    from app.embeddings import get_embeddings
+
     cache_dir = _cache_path(repo_url)
     if not os.path.exists(cache_dir) or not os.listdir(cache_dir):
         return None

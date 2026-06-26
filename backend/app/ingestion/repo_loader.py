@@ -2,8 +2,6 @@ import os
 import shutil
 import tempfile
 
-import git
-
 from app.models.schemas import RepoMetaData
 
 IGNORE_DIRS={".git", "node_modules", "__pycache__", "venv", ".venv", "dist", "build"}
@@ -22,6 +20,7 @@ Language_Extentions={
 
 def clone_repo(github_url: str)->str:
     """Shallow clones a github repo in its local directory and returns local path"""
+    import git
     localpath=tempfile.mkdtemp(prefix="onboarding_agent_")
     git.Repo.clone_from(github_url, localpath, depth=1)
     return localpath
