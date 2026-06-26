@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes.onboard import router as onboard_router
 from app.config import settings
+from fastapi.staticfiles import StaticFiles
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +32,7 @@ app.add_middleware(
 
 app.include_router(onboard_router)
 
+app.mount("/", StaticFiles(directory="static", html=True, name="static"))
 
 @app.on_event("startup")
 async def startup():
