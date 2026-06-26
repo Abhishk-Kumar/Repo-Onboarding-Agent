@@ -1,22 +1,32 @@
 import threading
 
-from langchain_huggingface import HuggingFaceEmbeddings
-from app.config import settings
+from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
-_embeddings_instance: HuggingFaceEmbeddings | None = None
+_embeddings_instance = None
 _embeddings_lock = threading.Lock()
 
 
-def get_embeddings() -> HuggingFaceEmbeddings:
+class _ONNXEmbeddings:
+    """LangChain-compatible embedding wrapper using ChromaDB's ONNX model.
+    No torch dependency — uses ONNX runtime (~50MB vs ~300MB).
+    """
+
+    def __init__(self):
+        self._model = ONNXMiniLM_L6_V2()
+
+    def embed_documents(self, texts):
+        return self._model(texts)
+
+    def embed_query(self, text):
+        return self._model([text])[0]
+
+
+def get_embeddings():
     global _embeddings_instance
     if _embeddings_instance is None:
         with _embeddings_lock:
             if _embeddings_instance is None:
-                _embeddings_instance = HuggingFaceEmbeddings(
-                    model_name=settings.embedding_model,
-                    model_kwargs={"device": "cpu"},
-                    encode_kwargs={"device": "cpu"},
-                )
+                _embeddings_instance = _ONNXEmbeddings()
     return _embeddings_instance
 
 
