@@ -32,6 +32,10 @@ app.add_middleware(
 
 app.include_router(onboard_router)
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 @app.on_event("startup")
