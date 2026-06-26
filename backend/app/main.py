@@ -1,6 +1,5 @@
 import logging
 import sys
-import threading
 
 from dotenv import load_dotenv
 
@@ -43,15 +42,4 @@ async def startup():
     logger.info("Starting Codebase Onboarding Agent v3...")
     logger.info("Embedding model: %s", settings.embedding_model)
     logger.info("Vector store path: %s", settings.vector_store_path)
-
-    def _preload():
-        try:
-            from app.embeddings import get_embeddings
-            logger.info("Pre-loading embedding model in background...")
-            get_embeddings()
-            logger.info("Embedding model loaded successfully")
-        except Exception as e:
-            logger.warning("Embedding model pre-load failed: %s. Will load on first request.", e)
-
-    threading.Thread(target=_preload, daemon=True).start()
-    logger.info("Server ready (model loading in background)")
+    logger.info("Server ready (model loads on first request)")
