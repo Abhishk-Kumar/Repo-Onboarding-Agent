@@ -32,7 +32,7 @@ app.add_middleware(
 
 app.include_router(onboard_router)
 
-app.mount("/", StaticFiles(directory="static", html=True, name="static"))
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 @app.on_event("startup")
 async def startup():
