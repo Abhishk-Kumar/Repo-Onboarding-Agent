@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useRef, useState } from 'react'
+import { useMemo, useCallback, useEffect, useState } from 'react'
 import ReactFlow, {
   ReactFlowProvider,
   useNodesState,
@@ -11,209 +11,1277 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import dagre from 'dagre'
+import {
+  getModuleName,
+  getFileName,
+  buildFolderTree,
+  getFolderByPath,
+  getModuleEdges,
+  computeModuleStats,
+  getInternalEdges,
+  getExternalEdgesByFolder,
+  getFileToFileEdgesBetweenModules,
+  getNodeColor,
+  getModuleColor,
+} from '../utils/graphUtils'
 
-const FOLDER_COLORS = {
-  app: '#6366f1',
-  src: '#a78bfa',
-  lib: '#34d399',
-  components: '#f472b6',
-  utils: '#fbbf24',
-  routes: '#fb923c',
-  pages: '#60a5fa',
-  api: '#f87171',
-  config: '#a1a1aa',
-  tests: '#4ade80',
-  default: '#8888a0',
+const NODE_W = 200
+const NODE_H = 76
+const FOLDER_CARD_W = 160
+const FOLDER_CARD_H = 56
+const FILE_NODE_W = 160
+const FILE_NODE_H = 36
+const CONTAINER_PAD = 20
+const CONTAINER_HEADER_H = 36
+const CONTAINER_FOOTER_H = 36
+const GRID_GAP = 14
+
+const externalDepsHandlerRef = { current: null }
+
+function ContainerNode({ data }) {
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        background: 'var(--color-surface)',
+        border: `2px solid ${data.color}`,
+        borderRadius: 12,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        boxShadow: `0 0 30px ${data.color}22, inset 0 0 60px ${data.color}08`,
+        transition: 'all 0.35s ease',
+      }}
+    >
+      <div
+        style={{
+          padding: '6px 14px',
+          borderBottom: `1px solid ${data.color}33`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexShrink: 0,
+          background: `${data.color}11`,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 13,
+            fontWeight: 600,
+            color: data.color,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          <span style={{ fontSize: 15 }}>{data.icon || '📂'}</span>
+          {data.title}
+        </div>
+        {data.stats && (
+          <div
+            style={{
+              fontSize: 10,
+              color: '#8888a0',
+              fontFamily: "'JetBrains Mono', monospace",
+              display: 'flex',
+              gap: 10,
+            }}
+          >
+            <span>{data.stats.files} files</span>
+            <span>{data.stats.subfolders} folders</span>
+            <span>{data.stats.internal} internal</span>
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }} />
+
+      {data.externalDepCount > 0 && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation()
+            if (externalDepsHandlerRef.current) externalDepsHandlerRef.current()
+          }}
+          style={{
+            padding: '5px 14px',
+            borderTop: `1px solid ${data.color}22`,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 11,
+            color: '#a5b4fc',
+            cursor: 'pointer',
+            fontFamily: "'JetBrains Mono', monospace",
+            background: `${data.color}08`,
+            transition: 'background 0.15s',
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) =>
+            (e.currentTarget.style.background = `${data.color}22`)
+          }
+          onMouseLeave={(e) =>
+            (e.currentTarget.style.background = `${data.color}08`)
+          }
+        >
+          <span style={{ fontSize: 12 }}>🔗</span>
+          <span style={{ fontWeight: 600 }}>{data.externalDepCount}</span>
+          <span>external deps ·</span>
+          <span>{data.externalModuleCount} modules</span>
+          <span style={{ marginLeft: 'auto', fontSize: 9, opacity: 0.6 }}>
+            click to view
+          </span>
+        </div>
+      )}
+    </div>
+  )
 }
 
-function getNodeColor(folder) {
-  return FOLDER_COLORS[folder] || FOLDER_COLORS.default
-}
+function Breadcrumb({ focusStack, onNavigate, comparisonTarget }) {
+  const segments = [{ name: 'Repository', path: '' }]
 
-function getLayoutedElements(nodes, edges, direction = 'TB', compact = false) {
-  // Compact mode tightens spacing and shrinks node footprint so a large
-  // graph can fit on screen in one glance, without requiring the user to
-  // scroll to see which files lit up after clicking something. Zoom/pan
-  // stay fully available either way — this only changes the *default*
-  // density of the layout, not what the user is allowed to do afterward.
-  const nodeWidth = compact ? 120 : 180
-  const nodeHeight = compact ? 36 : 50
-  const gridGapX = compact ? 14 : 24
-  const gridGapY = compact ? 10 : 16
-
-  // Real codebases always have a chunk of files with zero or one internal
-  // dependency edge (config files, standalone schemas, route definitions
-  // that only get hit from outside the parsed graph, etc). If we hand
-  // these to dagre along with everything else, dagre treats them as their
-  // own disconnected components and stacks each one in its own vertical
-  // lane — that's exactly the "long single column on the left, taking all
-  // the height" shape from the screenshot. Instead: lay out only the nodes
-  // that are part of a real connected subgraph with dagre (this is the part
-  // where relationships actually matter and need branching layout), and
-  // arrange everything with zero edges as a separate compact grid that
-  // wraps across columns — using width instead of height, sitting beside
-  // the real graph rather than stacked above/below it.
-  const connectedIds = new Set()
-  edges.forEach((e) => {
-    connectedIds.add(e.source)
-    connectedIds.add(e.target)
-  })
-
-  const connectedNodes = nodes.filter((n) => connectedIds.has(n.id))
-  const isolatedNodes = nodes.filter((n) => !connectedIds.has(n.id))
-
-  // --- Layout the connected subgraph with dagre ---
-  const dagreGraph = new dagre.graphlib.Graph()
-  dagreGraph.setDefaultEdgeLabel(() => ({}))
-  dagreGraph.setGraph({
-    rankdir: direction,
-    nodesep: compact ? 16 : 40,
-    ranksep: compact ? 28 : 60,
-    marginx: 20,
-    marginy: 20,
-    // 'tight-tree' packs branching trees more efficiently than the default
-    // network-simplex ranker when a single node fans out into many
-    // children — it reduces the case where dagre prefers a tall narrow
-    // layout over a wide shallow one.
-    ranker: 'tight-tree',
-  })
-
-  connectedNodes.forEach((node) => {
-    dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight })
-  })
-  edges.forEach((edge) => {
-    if (connectedIds.has(edge.source) && connectedIds.has(edge.target)) {
-      dagreGraph.setEdge(edge.source, edge.target)
-    }
-  })
-  dagre.layout(dagreGraph)
-
-  const layoutedConnected = connectedNodes.map((node) => {
-    const pos = dagreGraph.node(node.id)
-    return {
-      ...node,
-      targetPosition: direction === 'LR' ? Position.Left : Position.Top,
-      sourcePosition: direction === 'LR' ? Position.Right : Position.Bottom,
-      style: {
-        ...node.style,
-        width: nodeWidth,
-        padding: compact ? '4px 6px' : '6px 10px',
-        fontSize: compact ? 9 : 11,
-      },
-      position: {
-        x: pos.x - nodeWidth / 2,
-        y: pos.y - nodeHeight / 2,
-      },
-    }
-  })
-
-  // --- Wrap large ranks into a grid instead of one long line ---
-  // Dagre puts every node belonging to the same rank along a single
-  // perpendicular line (in TB mode: same y, spread across x; in LR mode:
-  // same x, spread across y). When one node fans out into many children
-  // (e.g. App.jsx importing 8 page components), all 8 land on the same
-  // rank and dagre lines them up one after another — visually that can
-  // look like a long single column if there isn't much sibling spread, or
-  // it can simply run far past the viewport width/height. Fix: regroup
-  // nodes by rank, and for any rank with more than maxPerLine nodes, wrap
-  // that rank's nodes into multiple sub-rows (TB) or sub-columns (LR) —
-  // using extra space on the cross-axis instead of letting a single rank
-  // sprawl indefinitely along the main axis. Ranks after a wrapped rank
-  // are shifted by however much extra cross-axis space the wrap consumed,
-  // so nothing overlaps.
-  const maxPerLine = 3
-  const rankAxis = direction === 'LR' ? 'x' : 'y'
-  const crossAxis = direction === 'LR' ? 'y' : 'x'
-  const crossStep = direction === 'LR' ? nodeHeight + gridGapY : nodeWidth + gridGapX
-
-  // Group nodes by their rank coordinate (rounding handles float jitter
-  // dagre sometimes introduces between nodes that are nominally the same rank).
-  const rankGroups = new Map()
-  layoutedConnected.forEach((n) => {
-    const key = Math.round(n.position[rankAxis])
-    if (!rankGroups.has(key)) rankGroups.set(key, [])
-    rankGroups.get(key).push(n)
-  })
-
-  const sortedRankKeys = Array.from(rankGroups.keys()).sort((a, b) => a - b)
-  let cumulativeShift = 0
-
-  sortedRankKeys.forEach((rankKey) => {
-    const group = rankGroups.get(rankKey)
-    // Shift this entire rank forward along the main axis by whatever
-    // earlier ranks' wrapping already consumed.
-    group.forEach((n) => {
-      n.position[rankAxis] += cumulativeShift
-    })
-
-    if (group.length <= maxPerLine) return
-
-    // Sort by current cross-axis position so wrapping preserves the
-    // left-to-right (or top-to-bottom) order dagre originally chose,
-    // rather than wrapping in arbitrary array order.
-    group.sort((a, b) => a.position[crossAxis] - b.position[crossAxis])
-
-    const lines = Math.ceil(group.length / maxPerLine)
-    const mainAxisStep = direction === 'LR' ? (nodeWidth + gridGapX) : (nodeHeight + gridGapY)
-
-    group.forEach((n, i) => {
-      const line = Math.floor(i / maxPerLine)
-      const posInLine = i % maxPerLine
-      n.position[crossAxis] = posInLine * crossStep
-      // Lines after the first push further along the main axis — this is
-      // the "extra space" this rank now needs, which every later rank
-      // must be shifted past.
-      n.position[rankAxis] += line * mainAxisStep
-    })
-
-    // Every rank after this one needs to move past the extra lines this
-    // rank introduced.
-    cumulativeShift += (lines - 1) * mainAxisStep
-  })
-
-  // Figure out the real pixel bounds of the connected layout so we know
-  // where to place the isolated grid without overlapping it.
-  let maxX = 0
-  let maxY = 0
-  layoutedConnected.forEach((n) => {
-    maxX = Math.max(maxX, n.position.x + nodeWidth)
-    maxY = Math.max(maxY, n.position.y + nodeHeight)
-  })
-  if (layoutedConnected.length === 0) {
-    maxX = 0
-    maxY = 0
+  if (comparisonTarget) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '8px 14px',
+          fontSize: 12,
+          color: '#8888a0',
+          fontFamily: "'JetBrains Mono', monospace",
+          borderBottom: '1px solid var(--color-border)',
+          flexShrink: 0,
+        }}
+      >
+        <button
+          onClick={() => onNavigate(0)}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#6366f1',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontFamily: 'inherit',
+            padding: '2px 6px',
+            borderRadius: 4,
+          }}
+        >
+          🏠 Repository
+        </button>
+        <span style={{ color: '#2a2a3e' }}>/</span>
+        <span style={{ color: '#e4e4ec', fontWeight: 600, padding: '2px 6px' }}>
+          {focusStack[0] || '...'}
+        </span>
+        <span style={{ color: '#2a2a3e' }}>↔</span>
+        <span style={{ color: '#f472b6', fontWeight: 600, padding: '2px 6px' }}>
+          {comparisonTarget}
+        </span>
+      </div>
+    )
   }
 
-  // --- Arrange isolated nodes as a compact grid, not a tall single column ---
-  // Choose a column count that scales gently with how many isolated nodes
-  // there are, capping how tall this section can get instead of letting it
-  // grow forever downward like the old single-column behavior did.
-  const targetColumns = Math.max(2, Math.ceil(Math.sqrt(isolatedNodes.length * 1.6)))
+  focusStack.forEach((s, i) => {
+    segments.push({
+      name: s,
+      path: focusStack.slice(0, i + 1).join('/'),
+    })
+  })
 
-  const isolatedStartX = direction === 'LR' ? 0 : maxX + (nodeWidth + gridGapX) * 1.5
-  const isolatedStartY = direction === 'LR' ? maxY + (nodeHeight + gridGapY) * 1.5 : 0
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '8px 14px',
+        fontSize: 12,
+        color: '#8888a0',
+        fontFamily: "'JetBrains Mono', monospace",
+        borderBottom: '1px solid var(--color-border)',
+        flexShrink: 0,
+        overflowX: 'auto',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {segments.map((seg, i) => (
+        <span
+          key={seg.path}
+          style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          {i > 0 && <span style={{ color: '#2a2a3e' }}>/</span>}
+          <button
+            onClick={() => onNavigate(i)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: i === segments.length - 1 ? '#e4e4ec' : '#6366f1',
+              cursor: i < segments.length - 1 ? 'pointer' : 'default',
+              fontSize: 12,
+              fontFamily: 'inherit',
+              padding: '2px 6px',
+              borderRadius: 4,
+              fontWeight: i === segments.length - 1 ? 600 : 400,
+              transition: 'color 0.15s',
+            }}
+          >
+            {i === 0 ? '🏠 ' : ''}
+            {seg.name}
+          </button>
+        </span>
+      ))}
+    </div>
+  )
+}
 
-  const layoutedIsolated = isolatedNodes.map((node, i) => {
-    const col = i % targetColumns
-    const row = Math.floor(i / targetColumns)
+function Sidebar({ fileData, nodes, edges, onNodeClick, onClose }) {
+  if (!fileData) return null
+
+  const safeNodes = nodes || []
+  const safeEdges = edges || []
+
+  const imports = safeEdges
+    .filter((e) => e && e.source === fileData.id)
+    .map((e) => {
+      const targetNode = safeNodes.find((n) => n && n.id === e.target)
+      return {
+        id: e.target,
+        label:
+          targetNode?.label ||
+          targetNode?.data?.label ||
+          getFileName(e.target),
+        folder: targetNode?.folder || targetNode?.data?.folder || 'default',
+      }
+    })
+
+  const importedBy = safeEdges
+    .filter((e) => e && e.target === fileData.id)
+    .map((e) => {
+      const sourceNode = safeNodes.find((n) => n && n.id === e.source)
+      return {
+        id: e.source,
+        label:
+          sourceNode?.label ||
+          sourceNode?.data?.label ||
+          getFileName(e.source),
+        folder: sourceNode?.folder || sourceNode?.data?.folder || 'default',
+      }
+    })
+
+  const relatedSet = new Set()
+  imports.forEach((imp) => {
+    safeEdges
+      .filter((e) => e && e.source === imp.id)
+      .forEach((e) => relatedSet.add(e.target))
+  })
+  importedBy.forEach((imp) => {
+    safeEdges
+      .filter((e) => e && e.target === imp.id)
+      .forEach((e) => relatedSet.add(e.source))
+  })
+  relatedSet.delete(fileData.id)
+
+  const related = Array.from(relatedSet)
+    .slice(0, 5)
+    .map((id) => {
+      const node = safeNodes.find((n) => n && n.id === id)
+      return {
+        id,
+        label: node?.label || node?.data?.label || getFileName(id),
+        folder: node?.folder || node?.data?.folder || 'default',
+      }
+    })
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        right: 12,
+        top: 52,
+        width: 280,
+        maxHeight: 'calc(100% - 64px)',
+        background: '#1a1a2e',
+        border: '1px solid #2a2a3e',
+        borderRadius: 12,
+        padding: '16px',
+        overflowY: 'auto',
+        zIndex: 10,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 12,
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            color: '#e4e4ec',
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          {getFileName(fileData.id)}
+        </h3>
+        <button
+          onClick={onClose}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#8888a0',
+            cursor: 'pointer',
+            fontSize: 16,
+            padding: '0 4px',
+          }}
+        >
+          ✕
+        </button>
+      </div>
+
+      <div
+        style={{
+          color: '#8888a0',
+          fontSize: 10,
+          marginBottom: 16,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}
+      >
+        {fileData.id}
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <div
+          style={{
+            color: '#E74C3C',
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: 0.5,
+            marginBottom: 8,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          Imports From ({imports.length})
+        </div>
+        {imports.length === 0 ? (
+          <div
+            style={{
+              color: '#8888a0',
+              fontSize: 11,
+              fontStyle: 'italic',
+            }}
+          >
+            No outgoing dependencies
+          </div>
+        ) : (
+          imports.map((imp) => (
+            <div
+              key={imp.id}
+              onClick={() => onNodeClick && onNodeClick(imp.id)}
+              style={{
+                padding: '6px 8px',
+                marginBottom: 4,
+                background: '#14141f',
+                borderRadius: 6,
+                borderLeft: `3px solid ${getNodeColor(imp.folder)}`,
+                cursor: 'pointer',
+                fontSize: 11,
+                color: '#e4e4ec',
+                fontFamily: "'JetBrains Mono', monospace",
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = '#1c1c2e')
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = '#14141f')
+              }
+            >
+              {getFileName(imp.label)}
+              <div
+                style={{
+                  fontSize: 9,
+                  color: '#8888a0',
+                  marginTop: 2,
+                }}
+              >
+                {imp.folder}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <div
+          style={{
+            color: '#3498DB',
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: 0.5,
+            marginBottom: 8,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          Imported By ({importedBy.length})
+        </div>
+        {importedBy.length === 0 ? (
+          <div
+            style={{
+              color: '#8888a0',
+              fontSize: 11,
+              fontStyle: 'italic',
+            }}
+          >
+            No incoming dependencies
+          </div>
+        ) : (
+          importedBy.map((imp) => (
+            <div
+              key={imp.id}
+              onClick={() => onNodeClick && onNodeClick(imp.id)}
+              style={{
+                padding: '6px 8px',
+                marginBottom: 4,
+                background: '#14141f',
+                borderRadius: 6,
+                borderLeft: `3px solid ${getNodeColor(imp.folder)}`,
+                cursor: 'pointer',
+                fontSize: 11,
+                color: '#e4e4ec',
+                fontFamily: "'JetBrains Mono', monospace",
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = '#1c1c2e')
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = '#14141f')
+              }
+            >
+              {getFileName(imp.label)}
+              <div
+                style={{
+                  fontSize: 9,
+                  color: '#8888a0',
+                  marginTop: 2,
+                }}
+              >
+                {imp.folder}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {related.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div
+            style={{
+              color: '#9B59B6',
+              fontSize: 10,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: 0.5,
+              marginBottom: 8,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            Most Related ({related.length})
+          </div>
+          {related.map((rel) => (
+            <div
+              key={rel.id}
+              onClick={() => onNodeClick && onNodeClick(rel.id)}
+              style={{
+                padding: '6px 8px',
+                marginBottom: 4,
+                background: '#14141f',
+                borderRadius: 6,
+                borderLeft: `3px solid ${getNodeColor(rel.folder)}`,
+                cursor: 'pointer',
+                fontSize: 11,
+                color: '#e4e4ec',
+                fontFamily: "'JetBrains Mono', monospace",
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = '#1c1c2e')
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = '#14141f')
+              }
+            >
+              {getFileName(rel.label)}
+              <div
+                style={{
+                  fontSize: 9,
+                  color: '#8888a0',
+                  marginTop: 2,
+                }}
+              >
+                {rel.folder}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div
+        style={{
+          borderTop: '1px solid #2a2a3e',
+          paddingTop: 12,
+          fontSize: 10,
+          color: '#8888a0',
+          fontFamily: "'JetBrains Mono', monospace",
+        }}
+      >
+        <div>
+          Functions:{' '}
+          {fileData.functions && Array.isArray(fileData.functions)
+            ? fileData.functions.length
+            : 0}
+        </div>
+        <div>Purpose: {fileData.purpose || 'N/A'}</div>
+      </div>
+    </div>
+  )
+}
+
+function ExternalBreakdownPanel({ breakdown, onModuleClick, onClose }) {
+  const entries = Object.entries(breakdown).sort(
+    (a, b) => b[1].count - a[1].count
+  )
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        right: 12,
+        top: 52,
+        width: 300,
+        maxHeight: 'calc(100% - 64px)',
+        background: '#1a1a2e',
+        border: '1px solid #2a2a3e',
+        borderRadius: 12,
+        padding: '16px',
+        overflowY: 'auto',
+        zIndex: 10,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 16,
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            color: '#a5b4fc',
+            fontSize: 13,
+            fontWeight: 600,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          🔗 External Connections
+        </h3>
+        <button
+          onClick={onClose}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#8888a0',
+            cursor: 'pointer',
+            fontSize: 16,
+            padding: '0 4px',
+          }}
+        >
+          ✕
+        </button>
+      </div>
+
+      <div
+        style={{
+          fontSize: 10,
+          color: '#8888a0',
+          marginBottom: 12,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}
+      >
+        {entries.length} connected modules ·{' '}
+        {entries.reduce((s, [, v]) => s + v.count, 0)} total imports
+      </div>
+
+      {entries.map(([mod, data]) => {
+        const color = getModuleColor(mod)
+        return (
+          <div
+            key={mod}
+            onClick={() => onModuleClick(mod)}
+            style={{
+              padding: '8px 10px',
+              marginBottom: 4,
+              background: '#14141f',
+              borderRadius: 8,
+              borderLeft: `3px solid ${color}`,
+              cursor: 'pointer',
+              transition: 'background 0.15s',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.background = '#1c1c2e')
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.background = '#14141f')
+            }
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12,
+                color: '#e4e4ec',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 2,
+                  background: color,
+                }}
+              />
+              {mod}
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: color,
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              {data.count} imports
+            </div>
+          </div>
+        )
+      })}
+
+      <div
+        style={{
+          marginTop: 12,
+          fontSize: 10,
+          color: '#8888a0',
+          fontFamily: "'JetBrains Mono', monospace",
+          textAlign: 'center',
+        }}
+      >
+        Click a module to compare files
+      </div>
+    </div>
+  )
+}
+
+function computeOverviewLayout(
+  nodes,
+  edges,
+  moduleStats,
+  highlightedNodes,
+  flowPath,
+  numberedNodes,
+  selectedFile
+) {
+  if (!nodes || nodes.length === 0) return { rfNodes: [], rfEdges: [], modulePositions: {} }
+
+  const modules = new Map()
+  nodes.forEach((n) => {
+    if (!n || !n.id) return
+    const mod = n.folder || getModuleName(n.id)
+    if (!modules.has(mod)) {
+      modules.set(mod, { id: `module:${mod}`, fileIds: [], folder: mod })
+    }
+    modules.get(mod).fileIds.push(n.id)
+  })
+
+  const moduleNames = Array.from(modules.keys())
+
+  let modulePositions
+  if (moduleNames.length <= 12) {
+    modulePositions = {}
+    const cols = Math.min(moduleNames.length, 4)
+    const rows = Math.ceil(moduleNames.length / cols)
+    const totalW = cols * (NODE_W + 40) - 40
+    const totalH = rows * (NODE_H + 30) - 30
+    const startX = -totalW / 2
+    const startY = -totalH / 2
+
+    moduleNames.forEach((mod, i) => {
+      const col = i % cols
+      const row = Math.floor(i / cols)
+      modulePositions[mod] = {
+        x: startX + col * (NODE_W + 40),
+        y: startY + row * (NODE_H + 30),
+      }
+    })
+  } else {
+    const dagreGraph = new dagre.graphlib.Graph()
+    dagreGraph.setDefaultEdgeLabel(() => ({}))
+    dagreGraph.setGraph({
+      rankdir: 'TB',
+      nodesep: 50,
+      ranksep: 80,
+      marginx: 30,
+      marginy: 30,
+    })
+
+    moduleNames.forEach((mod) => {
+      dagreGraph.setNode(mod, { width: NODE_W, height: NODE_H })
+    })
+
+    const me = getModuleEdges(edges)
+    me.forEach((e) => {
+      if (moduleNames.includes(e.source) && moduleNames.includes(e.target)) {
+        dagreGraph.setEdge(e.source, e.target)
+      }
+    })
+
+    dagre.layout(dagreGraph)
+
+    modulePositions = {}
+    moduleNames.forEach((mod) => {
+      const pos = dagreGraph.node(mod)
+      if (pos) {
+        modulePositions[mod] = {
+          x: pos.x - NODE_W / 2,
+          y: pos.y - NODE_H / 2,
+        }
+      }
+    })
+  }
+
+  const flowSet = flowPath instanceof Set ? flowPath : new Set()
+  const highlightSet = highlightedNodes instanceof Set ? highlightedNodes : new Set()
+  const allActive = new Set([...flowSet, ...highlightSet])
+  if (selectedFile) allActive.add(selectedFile)
+
+  const rfNodes = moduleNames.map((mod) => {
+    const stats = moduleStats.get(mod) || {
+      fileCount: 0,
+      subfolderCount: 0,
+      internalDeps: 0,
+    }
+    const color = getModuleColor(mod)
+    const pos = modulePositions[mod] || { x: 0, y: 0 }
+
+    const hasActivity = Array.from(allActive).some(
+      (id) => getModuleName(id) === mod
+    )
+
     return {
-      ...node,
-      targetPosition: direction === 'LR' ? Position.Left : Position.Top,
-      sourcePosition: direction === 'LR' ? Position.Right : Position.Bottom,
-      style: {
-        ...node.style,
-        width: nodeWidth,
-        padding: compact ? '4px 6px' : '6px 10px',
-        fontSize: compact ? 9 : 11,
+      id: `module:${mod}`,
+      type: 'default',
+      position: pos,
+      data: {
+        label: mod,
+        color,
+        fileCount: stats.fileCount,
+        subfolderCount: stats.subfolderCount,
+        internalDeps: stats.internalDeps,
+        isModule: true,
       },
-      position: {
-        x: isolatedStartX + col * (nodeWidth + gridGapX),
-        y: isolatedStartY + row * (nodeHeight + gridGapY),
+      style: {
+        background: hasActivity
+          ? `linear-gradient(135deg, ${color}, ${color}88)`
+          : `${color}15`,
+        border: `2px solid ${hasActivity ? color : `${color}44`}`,
+        borderRadius: 12,
+        padding: '10px 14px',
+        color: hasActivity ? '#fff' : '#e4e4ec',
+        fontSize: 13,
+        fontWeight: 600,
+        fontFamily: "'JetBrains Mono', monospace",
+        width: NODE_W,
+        boxShadow: hasActivity ? `0 0 20px ${color}44` : 'none',
+        cursor: 'pointer',
+        transition: 'all 0.25s ease',
+        opacity: allActive.size > 0 && !hasActivity ? 0.25 : 1,
       },
     }
   })
 
-  return { nodes: [...layoutedConnected, ...layoutedIsolated], edges }
+  const me = getModuleEdges(edges)
+  const rfEdges = me
+    .filter(
+      (e) => moduleNames.includes(e.source) && moduleNames.includes(e.target)
+    )
+    .map((e, i) => {
+      const isInFlow = flowSet.has(e.source) && flowSet.has(e.target)
+      const srcModActive = Array.from(allActive).some(
+        (id) => getModuleName(id) === e.source
+      )
+      const tgtModActive = Array.from(allActive).some(
+        (id) => getModuleName(id) === e.target
+      )
+      const edgeActive = isInFlow || (srcModActive && tgtModActive)
+
+      return {
+        id: `mod-e${i}`,
+        source: `module:${e.source}`,
+        target: `module:${e.target}`,
+        animated: isInFlow,
+        label: `${e.weight}`,
+        labelStyle: {
+          fill: '#8888a0',
+          fontSize: 10,
+          fontFamily: "'JetBrains Mono', monospace",
+        },
+        labelBgStyle: { fill: '#1a1a2e', opacity: 0.8 },
+        labelBgPadding: [4, 4],
+        style: {
+          stroke: edgeActive ? '#6366f1' : '#2a2a3e',
+          strokeWidth: Math.min(e.weight * 0.6 + 1, 5),
+          opacity: allActive.size > 0 && !edgeActive ? 0.06 : 0.65,
+          transition: 'all 0.3s ease',
+        },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: edgeActive ? '#6366f1' : '#2a2a3e',
+          width: 14,
+          height: 14,
+        },
+      }
+    })
+
+  return { rfNodes, rfEdges, modulePositions }
+}
+
+function computeFocusLayout(
+  focusStack,
+  folderTree,
+  nodes,
+  edges,
+  moduleStats,
+  overviewPositions,
+  highlightedNodes,
+  flowPath,
+  numberedNodes,
+  selectedFile
+) {
+  const folderPath = focusStack.join('/')
+  const focusedFolder = getFolderByPath(folderTree, focusStack)
+
+  if (!focusedFolder) {
+    return { rfNodes: [], rfEdges: [], externalBreakdown: {} }
+  }
+
+  const focusedFilePaths = focusedFolder.filePaths
+  const childFolders = focusedFolder.children || []
+  const childFiles = focusedFolder.files || []
+
+  const color = getModuleColor(focusStack[0] || 'default')
+
+  const flowSet = flowPath instanceof Set ? flowPath : new Set()
+  const highlightSet = highlightedNodes instanceof Set ? highlightedNodes : new Set()
+  const allActive = new Set([...flowSet, ...highlightSet])
+  if (selectedFile) allActive.add(selectedFile)
+
+  const internalEdges = getInternalEdges(edges, focusedFilePaths)
+
+  const fileNameFocused = (fid) => childFiles.some((cf) => cf.id === fid)
+  const visibleInternalEdges = internalEdges.filter(
+    (e) => fileNameFocused(e.source) && fileNameFocused(e.target)
+  )
+
+  const subfolderRfNodes = []
+  const fileRfNodes = []
+
+  let sfX = CONTAINER_PAD
+  const sfY = CONTAINER_PAD
+
+  childFolders.forEach((child) => {
+    const childColor = getModuleColor(child.name)
+    const hasActivity = Array.from(allActive).some(
+      (id) => id.startsWith(child.path + '/') || id === child.path
+    )
+
+    subfolderRfNodes.push({
+      id: `folder:${child.path}`,
+      type: 'default',
+      position: { x: sfX, y: sfY },
+      data: {
+        label: child.name,
+        color: childColor,
+        fileCount: child.fileCount,
+        subfolderCount: child.subfolderCount,
+        isFolder: true,
+        path: child.path,
+        isModule: false,
+      },
+      style: {
+        background: hasActivity ? `${childColor}33` : `${childColor}12`,
+        border: `2px solid ${hasActivity ? childColor : `${childColor}33`}`,
+        borderRadius: 8,
+        padding: '6px 10px',
+        color: hasActivity ? childColor : '#c4c4d0',
+        fontSize: 12,
+        fontWeight: 600,
+        fontFamily: "'JetBrains Mono', monospace",
+        width: FOLDER_CARD_W,
+        height: FOLDER_CARD_H,
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+      },
+    })
+    sfX += FOLDER_CARD_W + GRID_GAP
+  })
+
+  const fileCols = Math.max(1, Math.min(3, childFiles.length))
+  const fileStartY =
+    childFolders.length > 0
+      ? CONTAINER_PAD + FOLDER_CARD_H + GRID_GAP + 6
+      : CONTAINER_PAD
+
+  childFiles.forEach((f, i) => {
+    const col = i % fileCols
+    const row = Math.floor(i / fileCols)
+    const fx = CONTAINER_PAD + col * (FILE_NODE_W + GRID_GAP)
+    const fy = fileStartY + row * (FILE_NODE_H + GRID_GAP)
+
+    const isHighlighted = highlightSet.has(f.id)
+    const isInFlow = flowSet.has(f.id)
+    const isSelected = selectedFile === f.id
+
+    let borderColor = getNodeColor(f.folder || 'default')
+    let bgGradient = '#14141f'
+    let glow = 'none'
+    let textColor = '#e4e4ec'
+
+    if (isInFlow) {
+      borderColor = '#34d399'
+      bgGradient = 'linear-gradient(135deg, #34d39922, #05966922)'
+      textColor = '#34d399'
+    } else if (isSelected) {
+      borderColor = '#6366f1'
+      bgGradient = 'linear-gradient(135deg, #6366f122, #7c3aed22)'
+      textColor = '#a5b4fc'
+      glow = '0 0 12px #6366f144'
+    } else if (isHighlighted) {
+      borderColor = '#6366f1'
+      bgGradient = '#6366f115'
+    }
+
+    fileRfNodes.push({
+      id: f.id,
+      type: 'default',
+      position: { x: fx, y: fy },
+      data: {
+        label: f.label || getFileName(f.id),
+        folder: f.folder || 'default',
+        purpose: f.purpose || '',
+        functions: (f.functions && Array.isArray(f.functions))
+          ? f.functions.slice(0, 2)
+          : [],
+        isFile: true,
+        filePath: f.id,
+        isModule: false,
+      },
+      style: {
+        background: bgGradient,
+        border: `1.5px solid ${borderColor}`,
+        borderRadius: 6,
+        padding: '5px 8px',
+        color: textColor,
+        fontSize: 10,
+        fontFamily: "'JetBrains Mono', monospace",
+        width: FILE_NODE_W,
+        height: FILE_NODE_H,
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        boxShadow: glow,
+      },
+    })
+  })
+
+  const childrenContentW = Math.max(
+    childFolders.length > 0
+      ? childFolders.length * (FOLDER_CARD_W + GRID_GAP) - GRID_GAP
+      : 0,
+    Math.min(fileCols, childFiles.length) * (FILE_NODE_W + GRID_GAP) - GRID_GAP
+  )
+
+  const totalChildrenW = Math.max(
+    childrenContentW + CONTAINER_PAD * 2,
+    NODE_W * 2 + CONTAINER_PAD * 2
+  )
+
+  const lastContentY =
+    childFiles.length > 0
+      ? fileStartY +
+        Math.ceil(childFiles.length / fileCols) * (FILE_NODE_H + GRID_GAP)
+      : fileStartY
+
+  const innerH = Math.max(
+    lastContentY + CONTAINER_PAD,
+    childFolders.length > 0 || childFiles.length > 0 ? CONTAINER_PAD * 2 : CONTAINER_PAD * 2
+  )
+
+  const containerW = totalChildrenW
+  const containerH = innerH + CONTAINER_HEADER_H + CONTAINER_FOOTER_H
+
+  const modName = focusStack[0] || 'root'
+  const overviewPos = overviewPositions?.[modName]
+
+  let containerX
+  let containerY
+
+  if (overviewPos) {
+    containerX = overviewPos.x - CONTAINER_PAD
+    containerY = overviewPos.y - CONTAINER_HEADER_H - CONTAINER_PAD - 10
+  } else {
+    containerX = -containerW / 2
+    containerY = -containerH / 2 + 60
+  }
+
+  const offsetX = containerX + CONTAINER_PAD
+  const offsetY = containerY + CONTAINER_HEADER_H
+
+  const positionedSfNodes = subfolderRfNodes.map((n) => ({
+    ...n,
+    position: { x: n.position.x + offsetX, y: n.position.y + offsetY },
+    targetPosition: Position.Top,
+    sourcePosition: Position.Bottom,
+  }))
+
+  const positionedFileNodes = fileRfNodes.map((n) => ({
+    ...n,
+    position: { x: n.position.x + offsetX, y: n.position.y + offsetY },
+    targetPosition: Position.Top,
+    sourcePosition: Position.Bottom,
+  }))
+
+  const externalBreakdown = getExternalEdgesByFolder(edges, folderPath)
+  const externalCount = Object.values(externalBreakdown).reduce(
+    (s, v) => s + v.count,
+    0
+  )
+  const externalModuleCount = Object.keys(externalBreakdown).length
+
+  const containerNode = {
+    id: `container:${folderPath}`,
+    type: 'container',
+    position: { x: containerX, y: containerY },
+    style: { width: containerW, height: containerH },
+    draggable: false,
+    selectable: false,
+    data: {
+      title: focusStack.join(' / '),
+      color,
+      icon: focusStack.length === 1 ? '📦' : '📂',
+      externalDepCount: externalCount,
+      externalModuleCount: externalModuleCount,
+      stats: {
+        files: focusedFolder.fileCount,
+        subfolders: focusedFolder.subfolderCount,
+        internal: visibleInternalEdges.length,
+      },
+    },
+  }
+
+  const hiddenModules = Array.from(
+    new Set(nodes.map((n) => n.folder || getModuleName(n.id)))
+  ).filter((m) => m !== focusStack[0])
+
+  const fadedModuleNodes = hiddenModules
+    .map((mod) => {
+      const color = getModuleColor(mod)
+      const pos = overviewPositions?.[mod]
+      if (!pos) return null
+
+      return {
+        id: `faded:${mod}`,
+        type: 'default',
+        position: { x: pos.x, y: pos.y },
+        draggable: false,
+        selectable: false,
+        data: { label: mod, isFaded: true, isModule: false },
+        style: {
+          background: `${color}08`,
+          border: `1px solid ${color}22`,
+          borderRadius: 8,
+          padding: '6px 10px',
+          color: `${color}44`,
+          fontSize: 11,
+          fontWeight: 500,
+          fontFamily: "'JetBrains Mono', monospace",
+          width: NODE_W * 0.6,
+          height: NODE_H * 0.6,
+          cursor: 'default',
+          opacity: 0.2,
+          pointerEvents: 'none',
+          transition: 'all 0.3s ease',
+        },
+      }
+    })
+    .filter(Boolean)
+
+  const rfEdges = visibleInternalEdges.map((e, i) => ({
+    id: `int-e${i}`,
+    source: e.source,
+    target: e.target,
+    animated: flowSet.has(e.source) && flowSet.has(e.target),
+    style: {
+      stroke: '#2a2a3e',
+      strokeWidth: 1,
+      opacity: 0.5,
+    },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: '#2a2a3e',
+      width: 10,
+      height: 10,
+    },
+  }))
+
+  const rfNodes = [
+    containerNode,
+    ...positionedSfNodes,
+    ...positionedFileNodes,
+    ...fadedModuleNodes,
+  ]
+
+  return { rfNodes, rfEdges, externalBreakdown }
+}
+
+function computeComparisonLayout(moduleA, moduleB, edges, nodes) {
+  const connectedEdges = getFileToFileEdgesBetweenModules(
+    edges,
+    moduleA,
+    moduleB
+  )
+
+  const filesA = []
+  const filesB = []
+  const seenA = new Set()
+  const seenB = new Set()
+
+  connectedEdges.forEach((e) => {
+    if (getModuleName(e.source) === moduleA && !seenA.has(e.source)) {
+      filesA.push(e.source)
+      seenA.add(e.source)
+    } else if (getModuleName(e.target) === moduleA && !seenA.has(e.target)) {
+      filesA.push(e.target)
+      seenA.add(e.target)
+    }
+    if (getModuleName(e.target) === moduleB && !seenB.has(e.target)) {
+      filesB.push(e.target)
+      seenB.add(e.target)
+    } else if (getModuleName(e.source) === moduleB && !seenB.has(e.source)) {
+      filesB.push(e.source)
+      seenB.add(e.source)
+    }
+  })
+
+  const nodeW = 180
+  const nodeH = 34
+  const gap = 8
+  const colGap = 100
+  const leftX = 0
+  const rightX = nodeW + colGap
+
+  const rfNodes = []
+
+  const layoutedAs = filesA.map((fid, i) => {
+    const node = nodes.find((n) => n.id === fid)
+    return {
+      id: `cmp:${fid}`,
+      type: 'default',
+      position: { x: leftX, y: i * (nodeH + gap) },
+      data: {
+        label: node?.label || getFileName(fid),
+        isFile: true,
+        filePath: fid,
+        folder: node?.folder || getModuleName(fid),
+        isModule: false,
+      },
+      style: {
+        background: '#14141f',
+        border: `1.5px solid ${getNodeColor(node?.folder || '')}`,
+        borderRadius: 6,
+        padding: '4px 8px',
+        color: '#e4e4ec',
+        fontSize: 10,
+        fontFamily: "'JetBrains Mono', monospace",
+        width: nodeW,
+        height: nodeH,
+        cursor: 'pointer',
+      },
+    }
+  })
+
+  const layoutedBs = filesB.map((fid, i) => {
+    const node = nodes.find((n) => n.id === fid)
+    return {
+      id: `cmp:${fid}`,
+      type: 'default',
+      position: { x: rightX, y: i * (nodeH + gap) },
+      data: {
+        label: node?.label || getFileName(fid),
+        isFile: true,
+        filePath: fid,
+        folder: node?.folder || getModuleName(fid),
+        isModule: false,
+      },
+      style: {
+        background: '#14141f',
+        border: `1.5px solid ${getNodeColor(node?.folder || '')}`,
+        borderRadius: 6,
+        padding: '4px 8px',
+        color: '#e4e4ec',
+        fontSize: 10,
+        fontFamily: "'JetBrains Mono', monospace",
+        width: nodeW,
+        height: nodeH,
+        cursor: 'pointer',
+      },
+    }
+  })
+
+  rfNodes.push(...layoutedAs, ...layoutedBs)
+
+  const rfEdges = connectedEdges.map((e, i) => ({
+    id: `cmp-e${i}`,
+    source: `cmp:${e.source}`,
+    target: `cmp:${e.target}`,
+    style: {
+      stroke: '#6366f1',
+      strokeWidth: 1.5,
+      opacity: 0.7,
+    },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: '#6366f1',
+      width: 12,
+      height: 12,
+    },
+  }))
+
+  return { rfNodes, rfEdges }
 }
 
 function GraphInner({
@@ -225,146 +1293,258 @@ function GraphInner({
   flowPath,
   selectedFile,
 }) {
-  const [direction, setDirection] = useState('TB')
-  const [compact, setCompact] = useState(false)
-  const rawNodes = useMemo(() => {
-    if (!graph || !graph.nodes) return []
-    return graph.nodes.map((n) => {
-      const color = getNodeColor(n.folder)
-      const isHighlighted = highlightedNodes?.has(n.id)
-      const stepNum = numberedNodes?.find((s) => s.file_path === n.id)
-      const isInFlow = flowPath?.has(n.id)
-      const isSelected = selectedFile === n.id
+  const [focusStack, setFocusStack] = useState([])
+  const [sidebarFile, setSidebarFile] = useState(null)
+  const [showExternalBreakdown, setShowExternalBreakdown] = useState(false)
+  const [comparisonTarget, setComparisonTarget] = useState(null)
+  const [showComparison, setShowComparison] = useState(false)
 
-      return {
-        id: n.id,
-        type: 'default',
-        data: {
-          label: n.label,
-          folder: n.folder,
-          purpose: n.purpose,
-          functions: n.functions?.slice(0, 3) || [],
-          stepNumber: stepNum?.step_number,
-        },
-        style: {
-          background: isSelected
-            ? 'linear-gradient(135deg, #6366f1, #7c3aed)'
-            : isInFlow
-              ? 'linear-gradient(135deg, #34d399, #059669)'
-              : isHighlighted
-                ? '#1c1c2e'
-                : '#14141f',
-          border: `2px solid ${
-            isInFlow ? '#34d399' : isSelected ? '#6366f1' : isHighlighted ? '#6366f1' : color
-          }`,
-          borderRadius: 8,
-          padding: '6px 10px',
-          color: '#e4e4ec',
-          fontSize: 11,
-          fontFamily: "'JetBrains Mono', monospace",
-          width: 180,
-          opacity: highlightedNodes && !isHighlighted && !isSelected ? 0.25 : 1,
-          transition: 'all 0.3s ease',
-        },
-      }
-    })
-  }, [graph, highlightedNodes, numberedNodes, flowPath, selectedFile])
+  const { fitView } = useReactFlow()
 
-  const rawEdges = useMemo(() => {
-    if (!graph || !graph.edges) return []
-    return graph.edges.map((e, i) => {
-      const isInFlow = flowPath?.has(e.source) && flowPath?.has(e.target)
-      return {
-        id: e.id || `e${i}`,
-        source: e.source,
-        target: e.target,
-        animated: isInFlow,
-        style: {
-          stroke: isInFlow ? '#34d399' : '#2a2a3e',
-          strokeWidth: isInFlow ? 2.5 : 1,
-          opacity: highlightedNodes && !isInFlow ? 0.1 : 1,
-          transition: 'all 0.3s ease',
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: isInFlow ? '#34d399' : '#2a2a3e',
-          width: 16,
-          height: 16,
-        },
-      }
-    })
-  }, [graph, highlightedNodes, flowPath])
+  const safeGraph = useMemo(() => {
+    if (!graph) return { nodes: [], edges: [] }
+    return {
+      nodes: Array.isArray(graph.nodes) ? graph.nodes : [],
+      edges: Array.isArray(graph.edges) ? graph.edges : [],
+    }
+  }, [graph])
 
-  const { nodes: layoutedNodes, edges: layoutedEdges } = useMemo(
-    () => getLayoutedElements(rawNodes, rawEdges, direction, compact),
-    [rawNodes, rawEdges, direction, compact]
+  const folderTree = useMemo(
+    () => buildFolderTree(safeGraph.nodes),
+    [safeGraph.nodes]
   )
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes)
-  const [edgesState, setEdges, onEdgesChange] = useEdgesState(layoutedEdges)
-  const { fitView } = useReactFlow()
-  const initialFitDone = useRef(false)
+  const moduleStats = useMemo(
+    () => computeModuleStats(safeGraph.nodes, safeGraph.edges),
+    [safeGraph]
+  )
+
+  const uniqueModules = useMemo(() => {
+    const mods = new Set()
+    safeGraph.nodes.forEach((n) => {
+      if (n && n.id) mods.add(n.folder || getModuleName(n.id))
+    })
+    return mods.size
+  }, [safeGraph])
+
+  const inOverviewMode = focusStack.length === 0 && !showComparison
+  const inFocusMode = focusStack.length > 0 && !showComparison
+
+  // Separate layout computations for each mode to avoid refs during render
+  // Compute overview positions independent of view mode
+  // Used by focusLayout to position faded module nodes
+  const overviewPositions = useMemo(() => {
+    if (!safeGraph.nodes || safeGraph.nodes.length === 0) return {}
+    const { modulePositions } = computeOverviewLayout(
+      safeGraph.nodes, safeGraph.edges, moduleStats,
+      new Set(), new Set(), null, null
+    )
+    return modulePositions
+  }, [safeGraph, moduleStats])
+
+  const overviewResult = useMemo(() => {
+    if (!inOverviewMode) return null
+    if (!safeGraph.nodes || safeGraph.nodes.length === 0) return null
+    return computeOverviewLayout(
+      safeGraph.nodes,
+      safeGraph.edges,
+      moduleStats,
+      highlightedNodes,
+      flowPath,
+      numberedNodes,
+      selectedFile
+    )
+  }, [inOverviewMode, safeGraph, moduleStats, highlightedNodes, flowPath, numberedNodes, selectedFile])
+
+  const focusResult = useMemo(() => {
+    if (!inFocusMode) return null
+    if (!safeGraph.nodes || safeGraph.nodes.length === 0) return null
+    return computeFocusLayout(
+      focusStack,
+      folderTree,
+      safeGraph.nodes,
+      safeGraph.edges,
+      moduleStats,
+      overviewPositions,
+      highlightedNodes,
+      flowPath,
+      numberedNodes,
+      selectedFile
+    )
+  }, [
+    inFocusMode, focusStack, folderTree, safeGraph, moduleStats,
+    overviewPositions, highlightedNodes, flowPath, numberedNodes, selectedFile,
+  ])
+
+  const comparisonResult = useMemo(() => {
+    if (!showComparison || !comparisonTarget) return null
+    const focusedMod = focusStack[0]
+    return computeComparisonLayout(
+      focusedMod,
+      comparisonTarget,
+      safeGraph.edges,
+      safeGraph.nodes
+    )
+  }, [showComparison, comparisonTarget, focusStack, safeGraph])
+
+  const { computedNodes, computedEdges, externalBreakdownData } = useMemo(() => {
+    if (overviewResult) {
+      return {
+        computedNodes: overviewResult.rfNodes,
+        computedEdges: overviewResult.rfEdges,
+        externalBreakdownData: null,
+      }
+    }
+    if (focusResult) {
+      return {
+        computedNodes: focusResult.rfNodes,
+        computedEdges: focusResult.rfEdges,
+        externalBreakdownData: focusResult.externalBreakdown,
+      }
+    }
+    if (comparisonResult) {
+      return {
+        computedNodes: comparisonResult.rfNodes,
+        computedEdges: comparisonResult.rfEdges,
+        externalBreakdownData: null,
+      }
+    }
+    return { computedNodes: [], computedEdges: [], externalBreakdownData: null }
+  }, [overviewResult, focusResult, comparisonResult])
+
+  const [nodes, setNodes, onNodesChange] = useNodesState([])
+  const [edgesState, setEdges, onEdgesChange] = useEdgesState([])
 
   useEffect(() => {
-    setNodes(layoutedNodes)
-    setEdges(layoutedEdges)
-  }, [layoutedNodes, layoutedEdges, setNodes, setEdges])
+    setNodes(computedNodes)
+    setEdges(computedEdges)
+  }, [computedNodes, computedEdges, setNodes, setEdges])
 
   useEffect(() => {
-    if (nodes.length > 0) {
-      setTimeout(() => {
-        fitView({ padding: 0.3 })
-        initialFitDone.current = true
-      }, 50)
+    externalDepsHandlerRef.current = () => {
+      setShowExternalBreakdown((prev) => !prev)
     }
-    // direction and compact are included here on purpose: whenever the user
-    // flips horizontal/vertical or toggles compact mode, the whole layout
-    // reshapes (dagre recomputes every node position), so the camera needs
-    // to re-fit to the new shape instead of staying zoomed into wherever it
-    // was for the old layout.
-  }, [nodes.length, direction, compact, fitView])
+    return () => {
+      externalDepsHandlerRef.current = null
+    }
+  }, [])
 
-  // When a highlight set changes (a feature lit up a specific group of
-  // files — e.g. clicking a node, running Start Here, or tracing a flow),
-  // automatically frame the camera around just those highlighted nodes so
-  // the user sees the result immediately without manually scrolling to find
-  // where on the (possibly large) graph the highlight actually landed.
-  // Pan/zoom remain fully available afterward for the user to look closer.
   useEffect(() => {
-    const idsToFocus = new Set()
-    if (highlightedNodes) {
-      highlightedNodes.forEach((id) => idsToFocus.add(id))
+    if (
+      !showComparison &&
+      focusStack.length > 0 &&
+      computedNodes.length > 0
+    ) {
+      const timer = setTimeout(() => {
+        fitView({ padding: 0.25, duration: 350 })
+      }, 120)
+      return () => clearTimeout(timer)
     }
-    if (flowPath) {
-      flowPath.forEach((id) => idsToFocus.add(id))
+  }, [focusStack, showComparison, computedNodes.length, fitView])
+
+  useEffect(() => {
+    if (showComparison && computedNodes.length > 0) {
+      const timer = setTimeout(() => {
+        fitView({ padding: 0.5, duration: 400 })
+      }, 80)
+      return () => clearTimeout(timer)
     }
-    if (idsToFocus.size === 0) return
+  }, [showComparison, computedNodes.length, fitView])
 
-    setTimeout(() => {
-      fitView({
-        padding: 0.4,
-        duration: 400,
-        nodes: Array.from(idsToFocus).map((id) => ({ id })),
-      })
-    }, 60)
-  }, [highlightedNodes, flowPath, fitView])
+  const nodeTypes = useMemo(() => ({ container: ContainerNode }), [])
 
-  const handleNodeClick = useCallback(
+  const handleNodeClickFn = useCallback(
     (event, node) => {
-      if (onNodeClick) onNodeClick(node.id)
+      if (!node || !node.id) return
+
+      if (
+        node.id.startsWith('container:') ||
+        node.id.startsWith('faded:') ||
+        node.id.startsWith('cmp:')
+      )
+        return
+
+      if (node.data?.isFolder) {
+        setFocusStack((prev) => [...prev, node.data.label])
+        setSidebarFile(null)
+        setShowExternalBreakdown(false)
+        setShowComparison(false)
+        setComparisonTarget(null)
+        return
+      }
+
+      if (node.data?.isModule) {
+        const modName = node.data.label
+        setFocusStack([modName])
+        setSidebarFile(null)
+        setShowExternalBreakdown(false)
+        setShowComparison(false)
+        setComparisonTarget(null)
+        return
+      }
+
+      if (node.data?.isFile || node.data?.filePath) {
+        const fileId = node.data.filePath || node.id
+        const fileData = safeGraph.nodes.find((n) => n && n.id === fileId)
+        if (fileData) {
+          setSidebarFile(fileData)
+        }
+        if (typeof onNodeClick === 'function') {
+          onNodeClick(fileId)
+        }
+      }
     },
-    [onNodeClick]
+    [onNodeClick, safeGraph.nodes]
+  )
+
+  const handlePaneClick = useCallback(() => {
+    if (showComparison) {
+      setShowComparison(false)
+      setComparisonTarget(null)
+      setShowExternalBreakdown(false)
+      return
+    }
+    if (focusStack.length > 0) {
+      setFocusStack([])
+      setSidebarFile(null)
+      setShowExternalBreakdown(false)
+      setShowComparison(false)
+      setComparisonTarget(null)
+    }
+  }, [focusStack, showComparison])
+
+  const handleBreadcrumbNavigate = useCallback(
+    (index) => {
+      if (showComparison) {
+        setShowComparison(false)
+        setComparisonTarget(null)
+      }
+      if (index === 0) {
+        setFocusStack([])
+      } else {
+        setFocusStack(focusStack.slice(0, index))
+      }
+      setSidebarFile(null)
+      setShowExternalBreakdown(false)
+    },
+    [focusStack, showComparison]
   )
 
   const handleContextMenu = useCallback(
     (event, node) => {
       event.preventDefault()
-      if (onNodeContextMenu) onNodeContextMenu(node.id)
+      if (typeof onNodeContextMenu === 'function') onNodeContextMenu(node.id)
     },
     [onNodeContextMenu]
   )
 
-  if (!graph || !graph.nodes || graph.nodes.length === 0) {
+  const handleExternalModuleClick = useCallback((mod) => {
+    setComparisonTarget(mod)
+    setShowComparison(true)
+    setShowExternalBreakdown(false)
+  }, [])
+
+  if (!safeGraph.nodes || safeGraph.nodes.length === 0) {
     return (
       <div
         style={{
@@ -393,6 +1573,12 @@ function GraphInner({
         position: 'relative',
       }}
     >
+      <Breadcrumb
+        focusStack={focusStack}
+        onNavigate={handleBreadcrumbNavigate}
+        comparisonTarget={showComparison ? comparisonTarget : null}
+      />
+
       <div
         style={{
           display: 'flex',
@@ -407,107 +1593,114 @@ function GraphInner({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>{graph.nodes.length} files</span>
-          <span style={{ color: 'var(--color-border)' }}>|</span>
-          <span>{graph.edges.length} dependencies</span>
+          {showComparison ? (
+            <>
+              <span style={{ color: '#6366f1', fontWeight: 600 }}>
+                {focusStack[0]}
+              </span>
+              <span style={{ color: '#2a2a3e' }}>↔</span>
+              <span style={{ color: '#f472b6', fontWeight: 600 }}>
+                {comparisonTarget}
+              </span>
+              <span style={{ color: 'var(--color-border)' }}>|</span>
+              <span>{computedEdges.length} connections</span>
+            </>
+          ) : inOverviewMode ? (
+            <>
+              <span>{uniqueModules} top-level modules</span>
+              <span style={{ color: 'var(--color-border)' }}>|</span>
+              <span>
+                {getModuleEdges(safeGraph.edges).length} cross-module deps
+              </span>
+            </>
+          ) : (
+            <>
+              <span>
+                {computedNodes.length - 1} visible nodes
+              </span>
+              <span style={{ color: 'var(--color-border)' }}>|</span>
+              <span>
+                {computedNodes.filter(
+                  (n) =>
+                    !n.id.startsWith('container:') &&
+                    !n.id.startsWith('faded:') &&
+                    n.data?.isFile
+                ).length } files in view
+              </span>
+            </>
+          )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button
-            onClick={() => setCompact((c) => !c)}
-            title={compact ? 'Switch back to normal spacing' : 'Shrink layout so the whole graph fits on screen at once'}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              background: compact ? 'rgba(99,102,241,0.15)' : 'var(--color-surface)',
-              border: `1px solid ${compact ? '#6366f1' : 'var(--color-border)'}`,
-              borderRadius: 6,
-              color: compact ? '#a5b4fc' : 'var(--color-text-muted)',
-              fontSize: 11,
-              fontFamily: 'inherit',
-              padding: '4px 10px',
-              cursor: 'pointer',
-              transition: 'border-color 0.15s ease, color 0.15s ease, background 0.15s ease',
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path
-                d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            {compact ? 'Fitted' : 'Fit Whole Graph'}
-          </button>
+          {showComparison && (
+            <button
+              onClick={() => {
+                setShowComparison(false)
+                setComparisonTarget(null)
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 6,
+                color: 'var(--color-text-muted)',
+                fontSize: 11,
+                fontFamily: 'inherit',
+                padding: '4px 10px',
+                cursor: 'pointer',
+              }}
+            >
+              ← Back to Focus
+            </button>
+          )}
 
-          <button
-            onClick={() => setDirection((d) => (d === 'TB' ? 'LR' : 'TB'))}
-            title={direction === 'TB' ? 'Switch to horizontal layout' : 'Switch to vertical layout'}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              background: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 6,
-              color: 'var(--color-text-muted)',
-              fontSize: 11,
-              fontFamily: 'inherit',
-              padding: '4px 10px',
-              cursor: 'pointer',
-              transition: 'border-color 0.15s ease, color 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = '#6366f1'
-              e.currentTarget.style.color = '#e4e4ec'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'var(--color-border)'
-              e.currentTarget.style.color = 'var(--color-text-muted)'
-            }}
-          >
-            {direction === 'TB' ? (
-              <>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M5 12h14M13 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Horizontal
-              </>
-            ) : (
-              <>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 5v14M6 13l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Vertical
-              </>
-            )}
-          </button>
+          {inFocusMode && !showComparison && (
+            <div
+              style={{
+                padding: '2px 8px',
+                background: '#34d39922',
+                border: '1px solid #34d399',
+                borderRadius: 4,
+                color: '#6ee7b7',
+                fontSize: 10,
+                fontWeight: 600,
+              }}
+            >
+              📂 FOCUS MODE
+            </div>
+          )}
         </div>
       </div>
 
-      {/* This wrapper has a hard minHeight floor in px (not %) so React Flow's
-          canvas can never collapse to 0 height, regardless of what any ancestor
-          does or forgets to do with its own height. position: relative + the
-          ReactFlow style below (position: absolute, inset 0) is what makes
-          ReactFlow always fill exactly this box, no more, no less. */}
-      <div style={{ flex: '1 1 auto', minHeight: 480, position: 'relative', width: '100%' }}>
+      <div
+        style={{
+          flex: '1 1 auto',
+          minHeight: 480,
+          position: 'relative',
+          width: '100%',
+        }}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edgesState}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
-          onNodeClick={handleNodeClick}
+          onNodeClick={handleNodeClickFn}
+          onPaneClick={handlePaneClick}
           onNodeContextMenu={handleContextMenu}
+          nodeTypes={nodeTypes}
           panOnDrag={true}
           panOnScroll={true}
           zoomOnScroll={false}
           zoomOnPinch={true}
           zoomActivationKeyCode={['Meta', 'Control']}
-          nodesDraggable={true}
+          nodesDraggable={false}
+          nodesFocusable={false}
           attributionPosition="bottom-left"
           minZoom={0.05}
-          maxZoom={2}
+          maxZoom={3}
           style={{
             background: 'var(--color-bg)',
             position: 'absolute',
@@ -526,6 +1719,30 @@ function GraphInner({
           />
           <Background color="#1a1a2e" gap={20} />
         </ReactFlow>
+
+        {showExternalBreakdown && externalBreakdownData && (
+          <ExternalBreakdownPanel
+            breakdown={externalBreakdownData}
+            onModuleClick={handleExternalModuleClick}
+            onClose={() => setShowExternalBreakdown(false)}
+          />
+        )}
+
+        {!showComparison && (
+          <Sidebar
+            fileData={sidebarFile}
+            nodes={safeGraph.nodes}
+            edges={safeGraph.edges}
+            onNodeClick={(id) => {
+              const fileData = safeGraph.nodes.find((n) => n && n.id === id)
+              if (fileData) {
+                setSidebarFile(fileData)
+              }
+              if (typeof onNodeClick === 'function') onNodeClick(id)
+            }}
+            onClose={() => setSidebarFile(null)}
+          />
+        )}
       </div>
     </div>
   )
