@@ -25,16 +25,16 @@ import { TechStackStrip } from "./tech-stack-strip"
 import { GraphSkeleton } from "../skeletons"
 
 const COLORS = {
-  bg: "#0a0a12",
-  surface: "#13131f",
-  surfaceHover: "#1a1a2e",
-  border: "#2a2a3e",
-  borderHover: "#3a3a5e",
+  bg: "#121212",
+  surface: "#181818",
+  surfaceHover: "#202020",
+  border: "#282828",
+  borderHover: "#383838",
   text: "#e4e4ec",
-  textMuted: "#8888a0",
-  textDim: "#555570",
-  accent: "#6366f1",
-  accentGlow: "rgba(99,102,241,0.25)",
+  textMuted: "#888888",
+  textDim: "#555555",
+  accent: "#e4e4ec",
+  accentGlow: "rgba(228,228,236,0.15)",
   success: "#34d399",
   warning: "#fbbf24",
   danger: "#f87171",
@@ -258,10 +258,10 @@ function ModuleCard({ data }: { data: Record<string, unknown> }) {
       style={{
         width: 220,
         padding: "16px 18px",
-        background: isBackground ? "#13131c" : `${color}14`,
-        border: `2px solid ${isBackground ? "#2a2a3e" : color}`,
+        background: isBackground ? "#181818" : `${color}14`,
+        border: `2px solid ${isBackground ? COLORS.border : color}`,
         borderRadius: 14,
-        color: isBackground ? "#555570" : COLORS.text,
+        color: isBackground ? COLORS.textDim : COLORS.text,
         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
         cursor: isBackground ? "default" : "pointer",
         opacity: isBackground ? 0.85 : 1,
@@ -298,7 +298,7 @@ function ModuleCard({ data }: { data: Record<string, unknown> }) {
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 12, fontSize: 11, color: isBackground ? "#444455" : COLORS.textMuted }}>
+      <div style={{ display: "flex", gap: 12, fontSize: 11, color: isBackground ? "#555555" : COLORS.textMuted }}>
         <span>{stats.fileCount} files</span>
         <span>{stats.folderCount} folders</span>
       </div>
@@ -411,12 +411,12 @@ function FileNode({ data }: { data: Record<string, unknown> }) {
   const isSelected = !!data.isSelected
   const isSpotlit = !!data.isSpotlit
 
-  const borderColor = isSelected ? COLORS.accent
+  const borderColor = isSelected ? "#34d399"
     : isSpotlit ? COLORS.warning
     : isHighlighted ? COLORS.info
     : (data.color as string) || COLORS.border
 
-  const bg = isSelected ? `${COLORS.accent}18`
+  const bg = isSelected ? "#34d39918"
     : isSpotlit ? `${COLORS.warning}18`
     : isHighlighted ? `${COLORS.info}12`
     : COLORS.surface
@@ -1218,8 +1218,8 @@ function GraphInner({ graph }: { graph: { nodes: GraphNode[]; edges: RepoEdge[];
 
       <div style={{ flex: "1 1 auto", minHeight: 480, position: "relative", width: "100%" }}>
         <style>{`
-          .react-flow__controls-button { fill: #e4e4ec !important; background: #13131f !important; border-bottom: 1px solid #2a2a3e !important; }
-          .react-flow__controls-button:hover { background: #1a1a2e !important; }
+          .react-flow__controls-button { fill: #e4e4ec !important; background: #181818 !important; border-bottom: 1px solid #282828 !important; }
+          .react-flow__controls-button:hover { background: #202020 !important; }
         `}</style>
         <ReactFlow
           nodes={nodes}
@@ -1248,7 +1248,7 @@ function GraphInner({ graph }: { graph: { nodes: GraphNode[]; edges: RepoEdge[];
             bottom: 14,
             left: "auto",
           }} />
-          <Background color="#1a1a2e" gap={20} />
+          <Background color="#282828" gap={20} />
         </ReactFlow>
 
         {/* Tech stack inside canvas */}

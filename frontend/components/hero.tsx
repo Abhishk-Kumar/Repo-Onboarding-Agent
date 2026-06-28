@@ -135,7 +135,7 @@ export function Hero({ onOnboard }: { onOnboard: (repo: string) => void }) {
                 <Button
                   onClick={handleSubmit}
                   size="lg"
-                  className="group h-12 shrink-0 rounded-lg font-medium"
+                  className="group h-12 shrink-0 rounded-lg font-medium bg-[#34d399] text-black"
                 >
                   Onboard Repository
                   <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
@@ -180,7 +180,7 @@ export function Hero({ onOnboard }: { onOnboard: (repo: string) => void }) {
                 <Button
                   onClick={handleSubmit}
                   size="lg"
-                  className="group h-12 w-full rounded-lg font-medium"
+                  className="group h-12 w-full rounded-lg font-medium bg-[#34d399] text-black"
                 >
                   Onboard Repository
                   <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />

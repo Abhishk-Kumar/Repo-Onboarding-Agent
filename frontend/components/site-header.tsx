@@ -74,7 +74,7 @@ export function SiteHeader() {
           <Button
             onClick={scrollToTop}
             size="sm"
-            className="rounded-lg font-medium"
+            className="rounded-lg font-medium bg-[#34d399] text-black"
           >
             Get Started
           </Button>

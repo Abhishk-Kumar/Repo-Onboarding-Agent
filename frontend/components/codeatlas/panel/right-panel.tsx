@@ -31,14 +31,14 @@ export function RightPanel() {
               onClick={() => setTab(t.id)}
               className={`relative flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[12px] font-medium transition-colors ${
                 active
-                  ? "text-primary-foreground"
+                  ? "text-black"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
               {active && (
                 <motion.span
                   layoutId="tab-pill"
-                  className="absolute inset-0 rounded-lg bg-primary"
+                  className="absolute inset-0 rounded-lg bg-[#34d399]"
                   transition={{ type: "spring", stiffness: 380, damping: 30 }}
                 />
               )}

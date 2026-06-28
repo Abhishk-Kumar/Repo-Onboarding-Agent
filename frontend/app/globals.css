@@ -57,45 +57,45 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* CodeAtlas — dark developer-tool theme.
-   Palette: deep slate background, lighter slate surfaces,
-   violet primary accent, soft cyan secondary accent, near-white text. */
+/* CodeAtlas — dark monochrome theme.
+   Palette: deep neutral backgrounds, light gray accents,
+   green reserved only for CTAs and selected states. */
 :root {
   color-scheme: dark;
-  --background: oklch(0.17 0.012 290);
-  --foreground: oklch(0.96 0.005 290);
-  --card: oklch(0.21 0.015 290);
-  --card-foreground: oklch(0.96 0.005 290);
-  --popover: oklch(0.2 0.015 290);
-  --popover-foreground: oklch(0.96 0.005 290);
-  --primary: oklch(0.78 0.16 290);
-  --primary-foreground: oklch(0.18 0.03 290);
-  --secondary: oklch(0.26 0.018 290);
-  --secondary-foreground: oklch(0.96 0.005 290);
-  --muted: oklch(0.24 0.015 290);
-  --muted-foreground: oklch(0.7 0.02 290);
-  --accent: oklch(0.8 0.13 200);
-  --accent-foreground: oklch(0.18 0.03 200);
+  --background: oklch(0.17 0 0);
+  --foreground: oklch(0.94 0 0);
+  --card: oklch(0.21 0 0);
+  --card-foreground: oklch(0.94 0 0);
+  --popover: oklch(0.2 0 0);
+  --popover-foreground: oklch(0.94 0 0);
+  --primary: oklch(0.88 0 0);
+  --primary-foreground: oklch(0.15 0 0);
+  --secondary: oklch(0.26 0 0);
+  --secondary-foreground: oklch(0.94 0 0);
+  --muted: oklch(0.24 0 0);
+  --muted-foreground: oklch(0.68 0 0);
+  --accent: oklch(0.8 0 0);
+  --accent-foreground: oklch(0.15 0 0);
   --destructive: oklch(0.65 0.2 25);
   --border: oklch(1 0 0 / 9%);
   --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.78 0.16 290);
-  --chart-1: oklch(0.78 0.16 290);
-  --chart-2: oklch(0.8 0.13 200);
+  --ring: oklch(0.88 0 0);
+  --chart-1: oklch(0.78 0 0);
+  --chart-2: oklch(0.7 0 0);
   --chart-3: oklch(0.75 0.15 85);
   --chart-4: oklch(0.65 0.2 25);
-  --chart-5: oklch(0.6 0.02 290);
+  --chart-5: oklch(0.6 0 0);
   --radius: 0.75rem;
-  --sidebar: oklch(0.2 0.015 290);
-  --sidebar-foreground: oklch(0.96 0.005 290);
-  --sidebar-primary: oklch(0.78 0.16 290);
-  --sidebar-primary-foreground: oklch(0.18 0.03 290);
-  --sidebar-accent: oklch(0.26 0.018 290);
-  --sidebar-accent-foreground: oklch(0.96 0.005 290);
+  --sidebar: oklch(0.2 0 0);
+  --sidebar-foreground: oklch(0.94 0 0);
+  --sidebar-primary: oklch(0.88 0 0);
+  --sidebar-primary-foreground: oklch(0.15 0 0);
+  --sidebar-accent: oklch(0.26 0 0);
+  --sidebar-accent-foreground: oklch(0.94 0 0);
   --sidebar-border: oklch(1 0 0 / 9%);
-  --sidebar-ring: oklch(0.78 0.16 290);
+  --sidebar-ring: oklch(0.88 0 0);
 
-  /* CodeAtlas folder color coding — kept distinct from the violet brand
+  /* CodeAtlas folder color coding — kept distinct from the brand
      accent on purpose, these identify file categories on the graph,
      not the brand itself */
   --node-backend: oklch(0.74 0.16 162);
@@ -104,7 +104,7 @@
   --node-data: oklch(0.72 0.17 305);
   --node-util: oklch(0.7 0.04 200);
 
-  /* severity colors — functional/semantic, do not recolor these to brand violet */
+  /* severity colors — functional/semantic, do not recolor these to brand color */
   --sev-critical: oklch(0.62 0.22 22);
   --sev-high: oklch(0.7 0.19 45);
   --sev-medium: oklch(0.8 0.15 85);

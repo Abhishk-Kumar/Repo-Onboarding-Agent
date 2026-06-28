@@ -37,7 +37,7 @@ function WorkspacePageInner() {
         </p>
         <a
           href="/"
-          className="mt-2 inline-block rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          className="mt-2 inline-block rounded-lg bg-[#34d399] px-5 py-2.5 text-sm font-medium text-black transition-colors hover:bg-[#34d399]/90"
         >
           Go to Home
         </a>
