@@ -13,21 +13,7 @@ export const metadata: Metadata = {
   description:
     'CodeAtlas is an AI-powered codebase onboarding agent. Paste a GitHub repo or upload a zip to get an interactive dependency graph, AI chat, security scans, and a plain-English explanation of what the code does.',
   icons: {
-    icon: [
-      {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
-    apple: '/apple-icon.png',
+    icon: '/icon.svg',
   },
 }
 
