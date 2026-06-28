@@ -5,4 +5,7 @@ __pycache__/
 .DS_Store
 frontend/out/
 frontend/.next/
-**/__next.*.txt
+backend/static/*.txt
+backend/static/**/__next.*.txt
+backend/static/**/index.txt
+backend/static/_next/
