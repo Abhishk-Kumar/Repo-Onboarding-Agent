@@ -83,6 +83,7 @@ async def onboard(request: OnboardRequest):
 
         yield _sse_event("progress", {"message": f"Graph built: {len(graph['nodes'])} nodes, {len(graph['edges'])} edges"})
 
+        yield _sse_event("progress", {"message": "Generating AI summary..."})
         t0 = time.time()
         try:
             graph["nodes"] = generate_node_labels(graph["nodes"])

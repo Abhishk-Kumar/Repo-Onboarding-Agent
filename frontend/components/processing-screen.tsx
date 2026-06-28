@@ -43,7 +43,7 @@ export function ProcessingScreen({
           next.push({ message: event.message, state: "active" })
           return next
         })
-        setProgress((p) => Math.min(p + 18, 90))
+        setProgress((p) => Math.min(p + 18, 95))
       },
       (data) => {
         setOnboardResult({
@@ -67,7 +67,7 @@ export function ProcessingScreen({
 
     // Nudge progress periodically while waiting so it doesn't stay at 0%
     const nudge = setInterval(() => {
-      setProgress((p) => (p < 90 ? Math.min(p + 4, 85) : p))
+      setProgress((p) => (p < 95 ? Math.min(p + 4, 93) : p))
     }, 8000)
 
     return () => {
