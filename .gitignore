@@ -3,3 +3,6 @@ data/
 __pycache__/
 *.pyc
 .DS_Store
+frontend/out/
+frontend/.next/
+**/__next.*.txt

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:static": "next build && cp -r out/* ../backend/static/",
     "start": "next start",
     "lint": "eslint ."
   },
