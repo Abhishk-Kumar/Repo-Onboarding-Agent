@@ -92,3 +92,36 @@ def parse_js_imports(file_path: str, repo_root: str) -> list[dict]:
                 imports.append(resolved)
 
     return imports
+
+
+EXPRESS_ROUTE_PATTERNS = [
+    re.compile(r'\.(get|post|put|delete|patch|all)\s*\(\s*["\'](.+?)["\']'),
+    re.compile(r'router\.(get|post|put|delete|patch|all)\s*\(\s*["\'](.+?)["\']'),
+    re.compile(r'(?:app|router)\.route\s*\(\s*["\'](.+?)["\']\)'),
+]
+
+
+def find_express_routes(file_path: str) -> list[dict]:
+    routes = []
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except OSError:
+        return routes
+
+    for pattern in EXPRESS_ROUTE_PATTERNS:
+        for match in pattern.finditer(content):
+            if pattern.groups == 2:
+                method = match.group(1).upper()
+                path = match.group(2)
+            else:
+                method = "ANY"
+                path = match.group(1)
+            routes.append({
+                "method": method,
+                "path": path,
+                "function": "",
+                "framework": "express",
+            })
+
+    return routes

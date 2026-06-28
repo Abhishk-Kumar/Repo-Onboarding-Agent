@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes.onboard import router as onboard_router
+from app.routes.integration import router as integration_router
 from app.config import settings
 import os
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(onboard_router)
+app.include_router(integration_router)
 
 @app.get("/health")
 async def health():

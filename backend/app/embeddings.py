@@ -51,15 +51,8 @@ def get_embeddings():
     if _embeddings_instance is None:
         with _embeddings_lock:
             if _embeddings_instance is None:
-                try:
-                    logger.info("Initializing HuggingFace API embeddings...")
-                    _embeddings_instance = _HuggingFaceAPIEmbeddings()
-                    logger.info("Using HuggingFace Inference API for embeddings")
-                except Exception as e:
-                    logger.warning(
-                        "HuggingFace API unavailable (%s). Using simple fallback.", e
-                    )
-                    _embeddings_instance = _SimpleEmbeddings()
+                logger.info("Using simple embeddings (no external API calls).")
+                _embeddings_instance = _SimpleEmbeddings()
     return _embeddings_instance
 
 

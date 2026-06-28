@@ -2,7 +2,7 @@ import os
 import logging
 
 from app.graph.python_parser import parse_python_imports, parse_python_defs, find_flask_fastapi_routes
-from app.graph.js_parser import parse_js_imports
+from app.graph.js_parser import parse_js_imports, find_express_routes
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,11 @@ def build_dependency_graph(repo_root: str, file_list: list[str]) -> dict:
         if lang == "python":
             defs = parse_python_defs(fp)
             file_routes = find_flask_fastapi_routes(fp)
+            for r in file_routes:
+                r["file"] = rel_path
+                routes.append(r)
+        elif lang == "js":
+            file_routes = find_express_routes(fp)
             for r in file_routes:
                 r["file"] = rel_path
                 routes.append(r)
