@@ -9,3 +9,15 @@ backend/static/*.txt
 backend/static/**/__next.*.txt
 backend/static/**/index.txt
 backend/static/_next/
+
+
+node_modules/
+frontend/node_modules/
+
+frontend/.env.local
+frontend/.env
+
+frontend/.next/
+frontend/out/frontend/.env.local
+node_modules/
+frontend/node_modules/

@@ -12,7 +12,6 @@ export const metadata: Metadata = {
   title: 'CodeAtlas — Understand any codebase in minutes, not weeks',
   description:
     'CodeAtlas is an AI-powered codebase onboarding agent. Paste a GitHub repo or upload a zip to get an interactive dependency graph, AI chat, security scans, and a plain-English explanation of what the code does.',
-  generator: 'v0.app',
   icons: {
     icon: [
       {
